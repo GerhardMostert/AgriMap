@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0A63C9" />
+<title>Agri Map</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+<script src="https://unpkg.com/tokml@0.4.0/tokml.js"></script>
+
+<style>
+:root{
+  --blue:#0A63C9;        /* primary — aviation chart blue */
+  --blue-2:#084FA3;
+  --blue-3:#3C8AE0;
+  --tint:#E9F1FC;        /* soft blue fill  */
+  --ink:#0E1B2C;
+  --mute:#5C6E82;
+  --line:#D8E2EE;
+  --bg:#EEF3F9;
+  --red:#CE3527;
+  --red-tint:#FDECEA;
+  --r:12px;
+}
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent }
+html,body{ height:100%; margin:0; background:var(--bg); color:var(--ink);
+  font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; font-size:15px;
+  -webkit-font-smoothing:antialiased; overscroll-behavior:none }
+.mono{ font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums }
+
+/* ---------------- shell ---------------- */
+#app{ display:grid; grid-template-columns:376px 1fr; grid-template-rows:58px 1fr; height:100% }
+#app.hide-panel{ grid-template-columns:0 1fr }
+#app.hide-panel aside{ overflow:hidden; padding:0; border-right:0 }
+
+header{ grid-column:1/-1; display:flex; align-items:center; gap:12px; padding:0 16px;
+  background:#fff; position:relative }
+/* runway centreline under the header */
+header::after{ content:''; position:absolute; left:0; right:0; bottom:0; height:3px;
+  background:repeating-linear-gradient(90deg,var(--blue) 0 26px,transparent 26px 44px) }
+
+.brand{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:19px;
+  letter-spacing:-.01em; color:var(--ink); flex:0 0 auto }
+.brand svg{ display:block }
+.brand span{ color:var(--blue) }
+
+.spacer{ flex:1 }
+
+/* ---------------- buttons ---------------- */
+button{ font:inherit; cursor:pointer; border-radius:10px; border:1px solid transparent;
+  display:inline-flex; align-items:center; justify-content:center; gap:9px;
+  transition:background .13s, border-color .13s, color .13s }
+button:disabled{ opacity:.42; cursor:not-allowed }
+button:focus-visible{ outline:3px solid var(--blue-3); outline-offset:2px }
+
+.b-primary{ background:var(--blue); color:#fff; font-weight:600; font-size:16px;
+  padding:0 18px; height:50px; width:100% }
+.b-primary:hover:not(:disabled){ background:var(--blue-2) }
+.b-secondary{ background:var(--tint); color:var(--blue); font-weight:600; font-size:16px;
+  padding:0 18px; height:50px; width:100% }
+.b-secondary:hover:not(:disabled){ background:#DBE8F9 }
+.b-quiet{ background:#fff; color:var(--ink); border-color:var(--line); font-weight:500;
+  font-size:14px; height:40px; padding:0 14px }
+.b-quiet:hover:not(:disabled){ background:#F5F8FC; border-color:#BFD1E4 }
+.b-quiet.on{ background:var(--blue); border-color:var(--blue); color:#fff }
+.b-danger{ background:#fff; color:var(--red); border-color:#F0C9C4; font-weight:500;
+  font-size:14px; height:40px; padding:0 14px }
+.b-danger:hover:not(:disabled){ background:var(--red-tint) }
+.b-icon{ background:#fff; border-color:var(--line); width:40px; height:40px; padding:0; color:var(--mute) }
+.b-icon:hover{ background:#F5F8FC; color:var(--ink) }
+.b-plus{ background:var(--blue); color:#fff; width:52px; height:48px; flex:0 0 52px; font-size:26px; font-weight:400 }
+.b-plus:hover{ background:var(--blue-2) }
+.b-link{ background:none; color:var(--blue); font-size:13.5px; font-weight:500; height:34px; padding:0 8px }
+.b-link:hover{ background:var(--tint) }
+.b-link.danger{ color:var(--red) } .b-link.danger:hover{ background:var(--red-tint) }
+.stack{ display:flex; flex-direction:column; gap:10px }
+.side{ display:flex; gap:10px } .side>*{ flex:1 }
+
+/* ---------------- sidebar ---------------- */
+aside{ background:var(--bg); border-right:1px solid var(--line); overflow-y:auto;
+  padding:14px; display:flex; flex-direction:column; gap:14px }
+aside::-webkit-scrollbar{ width:9px }
+aside::-webkit-scrollbar-thumb{ background:#C7D5E5; border-radius:5px }
+.grab{ display:none }
+
+.card{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px }
+.card-head{ display:flex; align-items:center; gap:12px; margin-bottom:14px }
+.card-head .ic{ width:38px; height:38px; flex:0 0 38px; border-radius:50%; background:var(--tint);
+  display:flex; align-items:center; justify-content:center; color:var(--blue) }
+.card-head h2{ margin:0; font-size:18px; font-weight:700; letter-spacing:-.01em }
+
+input[type=text]{ width:100%; height:48px; padding:0 14px; font:inherit; font-size:16px;
+  color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:10px }
+input[type=text]::placeholder{ color:#9AACC0 }
+input[type=text]:focus{ outline:none; border-color:var(--blue); box-shadow:0 0 0 3px var(--tint) }
+select{ width:100%; height:48px; padding:0 40px 0 14px; font:inherit; font-size:16px; color:var(--ink);
+  background:#fff; border:1px solid var(--line); border-radius:10px; appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--mute) 50%),linear-gradient(135deg,var(--mute) 50%,transparent 50%);
+  background-position:calc(100% - 20px) 21px,calc(100% - 14px) 21px; background-size:6px 6px; background-repeat:no-repeat }
+select:focus{ outline:none; border-color:var(--blue); box-shadow:0 0 0 3px var(--tint) }
+.lbl{ display:block; font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+  color:var(--mute); margin-bottom:7px }
+.note{ font-size:13.5px; color:var(--mute); line-height:1.5; margin-top:12px }
+.empty{ font-size:14.5px; color:var(--mute); line-height:1.55 }
+
+/* ---------------- field rows ---------------- */
+.rows{ display:flex; flex-direction:column; gap:8px }
+.row{ display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:12px;
+  background:#fff; border:1px solid var(--line); border-left:4px solid var(--blue-3);
+  border-radius:10px; padding:10px 12px }
+.row.sel{ border-color:var(--blue); border-left-color:var(--blue); background:#F7FAFE;
+  box-shadow:0 0 0 3px var(--tint) }
+.row.off{ opacity:.5 }
+.row .nm{ font-weight:600; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  cursor:pointer; line-height:1.3 }
+.row .ha{ font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--mute); margin-top:2px }
+.row .kit{ display:flex; gap:2px }
+.row .kit button{ width:34px; height:34px; padding:0; background:none; border:none; color:var(--mute); font-size:15px }
+.row .kit button:hover{ background:var(--tint); color:var(--blue) }
+.row .kit button.armed{ background:var(--blue); color:#fff }
+.row input[type=checkbox]{ width:22px; height:22px; accent-color:var(--blue); cursor:pointer; margin:0 }
+.total{ margin-top:12px; padding-top:12px; border-top:1px solid var(--line); display:flex;
+  justify-content:space-between; align-items:baseline }
+.total .k{ font-size:13px; color:var(--mute); font-weight:500 }
+.total .v{ font-family:"IBM Plex Mono",monospace; font-size:19px; font-weight:500; color:var(--blue) }
+
+.foot{ text-align:center; padding:8px 0 20px; color:var(--mute); font-size:13px; line-height:1.7 }
+.foot b{ color:var(--ink); font-weight:600; display:block; font-size:14px }
+
+/* ---------------- map ---------------- */
+main{ position:relative; min-width:0 }
+#map{ position:absolute; inset:0; background:#DEE7F0 }
+.leaflet-container{ font-family:Inter,sans-serif; background:#DEE7F0 }
+.leaflet-top.leaflet-left{ margin-top:62px }
+.leaflet-bar a{ color:var(--ink)!important; border-color:var(--line)!important; width:34px; height:34px; line-height:34px }
+.leaflet-bar a:hover{ background:#F5F8FC!important }
+.leaflet-control-layers{ border:1px solid var(--line)!important; border-radius:10px!important;
+  box-shadow:0 2px 10px rgba(14,27,44,.1)!important }
+.leaflet-control-layers-toggle{ width:38px!important; height:38px!important }
+.leaflet-control-layers-expanded{ padding:12px 14px; font-size:14.5px }
+.leaflet-control-layers label{ margin:4px 0; display:flex; align-items:center; gap:8px }
+.leaflet-control-layers input{ width:17px; height:17px; accent-color:var(--blue) }
+.leaflet-control-attribution{ font-size:10px; background:rgba(255,255,255,.85)!important }
+.leaflet-control-scale-line{ background:rgba(255,255,255,.85); border-color:var(--mute)!important;
+  font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink) }
+.leaflet-draw-toolbar{ display:none }
+
+/* field name labels */
+.fname{ background:rgba(255,255,255,.94)!important; border:1px solid var(--blue)!important;
+  color:var(--ink)!important; border-radius:7px!important; padding:3px 9px!important;
+  font-size:13px!important; font-weight:600!important; box-shadow:0 1px 4px rgba(14,27,44,.18)!important;
+  white-space:nowrap }
+.fname::before{ display:none!important }
+.fname .sq{ font-family:"IBM Plex Mono",monospace; font-weight:500; color:var(--blue); margin-left:6px }
+
+/* floating search */
+#search{ position:absolute; top:12px; left:12px; z-index:640; display:flex; align-items:center;
+  background:#fff; border:1px solid var(--line); border-radius:11px; box-shadow:0 2px 12px rgba(14,27,44,.13);
+  width:330px; max-width:calc(100vw - 120px); overflow:hidden }
+#search input{ border:none; height:44px; border-radius:0; font-size:15px; flex:1; min-width:0 }
+#search input:focus{ box-shadow:none }
+#search button{ width:44px; height:44px; flex:0 0 44px; background:none; border:none; color:var(--blue) }
+#search button:hover{ background:var(--tint) }
+
+/* map buttons */
+.mapkit{ position:absolute; right:12px; bottom:34px; z-index:640; display:flex; flex-direction:column; gap:8px }
+.mapkit button{ width:46px; height:46px; background:#fff; border:1px solid var(--line);
+  border-radius:11px; box-shadow:0 2px 10px rgba(14,27,44,.13); color:var(--blue); font-size:19px }
+.mapkit button:hover{ background:#F5F8FC }
+
+/* the instruction banner while drawing */
+#banner{ position:absolute; left:50%; transform:translateX(-50%); top:12px; z-index:660;
+  background:var(--blue); color:#fff; border-radius:12px; padding:12px 14px 12px 18px;
+  box-shadow:0 6px 22px rgba(10,99,201,.35); display:none; align-items:center; gap:16px;
+  max-width:calc(100vw - 32px) }
+#banner.on{ display:flex }
+#banner .t{ font-size:14.5px; font-weight:500; line-height:1.4 }
+#banner .t b{ display:block; font-weight:700; font-size:15.5px; margin-bottom:2px }
+#banner button{ background:rgba(255,255,255,.18); color:#fff; height:36px; padding:0 14px;
+  font-size:14px; font-weight:600; flex:0 0 auto }
+#banner button:hover{ background:rgba(255,255,255,.3) }
+
+/* drop-files overlay */
+#dropzone{ position:absolute; inset:0; z-index:900; display:none; align-items:center; justify-content:center;
+  background:rgba(10,99,201,.15); border:3px dashed var(--blue) }
+#dropzone.on{ display:flex }
+#dropzone .box{ background:#fff; border-radius:14px; padding:20px 26px; text-align:center;
+  box-shadow:0 10px 34px rgba(14,27,44,.24); font-size:17px; font-weight:700; color:var(--blue) }
+#dropzone .box small{ display:block; font-weight:500; color:var(--mute); font-size:13.5px; margin-top:5px }
+
+/* toast */
+#toast{ position:fixed; left:50%; transform:translateX(-50%); bottom:26px; z-index:1200;
+  display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none }
+.tst{ background:var(--ink); color:#fff; padding:12px 18px; border-radius:11px; font-size:14.5px;
+  font-weight:500; box-shadow:0 8px 26px rgba(14,27,44,.3); animation:up .2s ease-out; max-width:88vw }
+.tst.ok{ background:var(--blue) } .tst.bad{ background:var(--red) }
+@keyframes up{ from{ opacity:0; transform:translateY(10px) } }
+
+/* dialog */
+.scrim{ position:fixed; inset:0; background:rgba(14,27,44,.45); z-index:1100; display:none;
+  align-items:center; justify-content:center; padding:18px }
+.scrim.on{ display:flex }
+.dlg{ width:430px; max-width:100%; background:#fff; border-radius:18px; padding:22px;
+  box-shadow:0 20px 60px rgba(14,27,44,.3) }
+.dlg h3{ margin:0 0 6px; font-size:20px; font-weight:700; letter-spacing:-.01em }
+.dlg p{ margin:0 0 16px; font-size:14.5px; color:var(--mute); line-height:1.5 }
+.dlg .acts{ display:flex; gap:10px; margin-top:20px }
+.dlg .acts button{ flex:1; height:48px; font-size:16px; font-weight:600 }
+
+/* ---------------- mobile ---------------- */
+@media (max-width:880px){
+  #app{ grid-template-columns:1fr; grid-template-rows:58px 1fr }
+  #app.hide-panel{ grid-template-columns:1fr }
+  main{ grid-column:1; grid-row:2 }
+  aside{ position:fixed; inset:auto 0 0 0; height:80vh; z-index:900; border-right:0;
+    border-radius:20px 20px 0 0; box-shadow:0 -8px 34px rgba(14,27,44,.22);
+    transform:translateY(100%); transition:transform .26s cubic-bezier(.32,.72,0,1);
+    padding:0 14px 30px; overflow-y:auto }
+  #app:not(.hide-panel) aside{ transform:translateY(0) }
+  #app.hide-panel aside{ padding:0 14px 30px }
+  .grab{ display:block; position:sticky; top:0; background:var(--bg); padding:10px 0 12px;
+    z-index:2; margin:0 -14px 0; text-align:center }
+  .grab i{ display:inline-block; width:44px; height:5px; border-radius:3px; background:#C2D0E0 }
+  #search{ width:auto; right:64px; max-width:none }
+  .mapkit{ bottom:24px }
+  .leaflet-top.leaflet-left{ margin-top:66px }
+}
+@media (prefers-reduced-motion:reduce){ *{ animation:none!important; transition:none!important } }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0A63C9" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 12h20"/><path d="M12 2l4 10-4 10-4-10z"/>
+      </svg>
+      Agri&nbsp;<span>Map</span>
+    </div>
+    <div class="spacer"></div>
+    <button id="btnPanel" class="b-quiet">Panel</button>
+  </header>
+
+  <aside>
+    <div class="grab"><i></i></div>
+
+    <!-- CLIENT MANAGER -->
+    <div class="card">
+      <div class="card-head">
+        <div class="ic">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </div>
+        <h2>Client Manager</h2>
+      </div>
+      <label class="lbl" for="selClient">Working on</label>
+      <select id="selClient"></select>
+      <div class="side" style="margin-top:8px">
+        <button id="btnRename" class="b-link">Rename client</button>
+        <button id="btnDeleteClient" class="b-link danger">Delete client</button>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:12px">
+        <input type="text" id="inpNewClient" placeholder="New client name">
+        <button id="btnAddClient" class="b-plus" title="Add client" aria-label="Add client">+</button>
+      </div>
+    </div>
+
+    <!-- FIELDS -->
+    <div class="card">
+      <div class="card-head">
+        <div class="ic">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <h2>Fields (Polygons)</h2>
+      </div>
+      <div class="rows" id="rows"></div>
+      <div class="total" id="totalBar" style="display:none">
+        <span class="k" id="totalCount">0 fields ticked</span>
+        <span class="v" id="totalHa">0.00 ha</span>
+      </div>
+    </div>
+
+    <!-- TOOLS -->
+    <div class="card">
+      <div class="card-head">
+        <div class="ic">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+          </svg>
+        </div>
+        <h2>Tools</h2>
+      </div>
+      <div class="stack">
+        <button id="btnDraw" class="b-primary">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/>
+          <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          Draw Polygon
+        </button>
+        <button id="btnEdit" class="b-secondary" disabled>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/>
+          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+          Edit Polygon
+        </button>
+        <button id="btnCut" class="b-secondary" disabled>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/>
+          <circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/>
+          <line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+          Cut Polygon
+        </button>
+      </div>
+      <div class="note" id="toolNote">Tap a field on the map or in the list to unlock Edit and Cut.</div>
+      <div class="side" style="margin-top:10px">
+        <button id="btnUndo" class="b-quiet" disabled>Undo</button>
+        <button id="btnZoomAll" class="b-quiet">Zoom to fields</button>
+      </div>
+    </div>
+
+    <!-- IMPORT / EXPORT -->
+    <div class="card">
+      <div class="card-head">
+        <div class="ic">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <h2>Import / Export</h2>
+      </div>
+      <div class="stack">
+        <button id="btnJob" class="b-primary">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/>
+          <circle cx="8" cy="10" r="2"/><path d="M14 9h5M14 13h5M5 17h6"/></svg>
+          Make JOB
+        </button>
+        <button id="btnImport" class="b-secondary">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Import KML
+        </button>
+      </div>
+      <input type="file" id="fileIn" accept=".kml,.kmz,.json,.geojson,.job,.txt" multiple style="display:none">
+      <input type="file" id="fileRestore" accept=".json" style="display:none">
+      <div class="note">Make JOB gives you the <b>.job</b> file for the aircraft plus a KML you can open in Google Earth.
+        <br><br>Import KML takes <b>as many files as you like at once</b> — open the folder, press Ctrl+A (Cmd+A on a Mac)
+        to grab them all, or just drag them onto the map. KMZ files work too.</div>
+      <div class="side" style="margin-top:6px">
+        <button id="btnBackup" class="b-link">Back up all clients</button>
+        <button id="btnRestore" class="b-link">Restore backup</button>
+      </div>
+    </div>
+
+    <div class="foot"><b>&copy; Agri Map</b>Made by Gerhard Mostert</div>
+  </aside>
+
+  <main>
+    <div id="map"></div>
+
+    <div id="search">
+      <input type="text" id="inpSearch" placeholder="Find a farm, town or coordinates" autocomplete="off">
+      <button id="btnSearch" title="Search" aria-label="Search">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      </button>
+    </div>
+
+    <div id="banner">
+      <div class="t"><b id="bannerTitle">Drawing a field</b><span id="bannerText"></span></div>
+      <button id="bannerCancel">Cancel</button>
+    </div>
+
+    <div id="dropzone"><div class="box">Drop your KML files here<small>All of them at once &mdash; KMZ and .job files work too</small></div></div>
+
+    <div class="mapkit">
+      <button id="btnLocate" title="My position" aria-label="My position">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+        <path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>
+      </button>
+      <button id="btnZoomAll2" title="Zoom to fields" aria-label="Zoom to fields">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+      </button>
+      <button id="btnSheet" title="Panel" aria-label="Panel">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<div class="scrim" id="scrim">
+  <div class="dlg">
+    <h3 id="dlgTitle"></h3>
+    <p id="dlgText"></p>
+    <div id="dlgField"></div>
+    <div class="acts">
+      <button id="dlgCancel" class="b-quiet" style="height:48px">Cancel</button>
+      <button id="dlgOk" class="b-primary" style="width:auto">OK</button>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+/* ==========================================================
+   AGRI MAP — draw client fields, make a .job file.
+   Everything is stored in this browser. Same storage keys as
+   the previous version, so fields already saved still load.
+   ========================================================== */
+
+const $ = id => document.getElementById(id);
+const uid = () => Math.random().toString(36).slice(2,10);
+const f6 = n => Number(n).toFixed(6);
+const haOf = f => { try { return turf.area(f)/10000; } catch(e){ return 0; } };
+
+function download(name, content, mime){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type:mime || 'text/plain' }));
+  a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+function toast(msg, kind){
+  const el = document.createElement('div');
+  el.className = 'tst' + (kind ? ' ' + kind : '');
+  el.textContent = msg;
+  $('toast').appendChild(el);
+  setTimeout(() => el.remove(), kind === 'bad' ? 4800 : 2800);
+}
+
+/* ---------- one dialog instead of prompt / confirm / alert ---------- */
+let resolveDlg = null;
+function dialog(o){
+  return new Promise(res => {
+    resolveDlg = res;
+    $('dlgTitle').textContent = o.title || '';
+    $('dlgText').textContent = o.text || '';
+    $('dlgText').style.display = o.text ? 'block' : 'none';
+    $('dlgField').innerHTML = '';
+    if(o.input !== undefined){
+      const i = document.createElement('input');
+      i.type = 'text'; i.id = 'dlgInput'; i.value = o.input || '';
+      if(o.placeholder) i.placeholder = o.placeholder;
+      $('dlgField').appendChild(i);
+      setTimeout(() => { i.focus(); i.select(); }, 50);
+    } else setTimeout(() => $('dlgOk').focus(), 50);
+    $('dlgOk').textContent = o.ok || 'OK';
+    $('dlgOk').className = o.danger ? 'b-primary' : 'b-primary';
+    if(o.danger) $('dlgOk').style.background = 'var(--red)'; else $('dlgOk').style.background = '';
+    $('scrim').classList.add('on');
+  });
+}
+function closeDlg(v){ $('scrim').classList.remove('on'); const r = resolveDlg; resolveDlg = null; if(r) r(v); }
+$('dlgOk').addEventListener('click', () => {
+  const i = $('dlgInput');
+  closeDlg(i ? i.value : true);
+});
+$('dlgCancel').addEventListener('click', () => closeDlg(null));
+$('scrim').addEventListener('click', e => { if(e.target === $('scrim')) closeDlg(null); });
+$('scrim').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); $('dlgOk').click(); } });
+const ask = (title, text, ok, danger) => dialog({ title, text, ok:ok||'Confirm', danger:danger!==false }).then(v => !!v);
+
+/* ---------- storage ---------- */
+const K_CLIENTS = 'agrimappro.clients';
+const K_SET = 'agrimappro.settings';
+const keyFor = id => 'agrimappro.client.' + id + '.features';
+const readJSON = (k,d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch(e){ return d; } };
+const writeJSON = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; }
+  catch(e){ toast('Storage is full — back up and remove an old client', 'bad'); return false; } };
+
+let clients = readJSON(K_CLIENTS, []) || [];
+let activeId = null;
+let FC = { type:'FeatureCollection', features:[] };
+let undoStack = [];
+let selected = null;
+let mode = 'idle';
+let mergeArm = null;
+
+function tidy(f){
+  f.properties = f.properties || {};
+  if(!f.properties.id) f.properties.id = uid();
+  if(!f.properties.name) f.properties.name = 'Field';
+  if(f.properties.visible === undefined) f.properties.visible = true;
+  delete f.properties.kind;
+  return f;
+}
+const shown = f => f.properties.visible !== false;
+function persist(){ if(activeId) writeJSON(keyFor(activeId), FC); }
+function snapshot(){ undoStack.push(JSON.stringify(FC)); if(undoStack.length > 30) undoStack.shift(); syncButtons(); }
+function undo(){
+  if(!undoStack.length) return;
+  FC = JSON.parse(undoStack.pop());
+  persist(); rebuild(); render(); toast('Undone', 'ok');
+}
+
+/* ---------- map ---------- */
+const map = L.map('map', { zoomControl:true, attributionControl:true }).setView([-28.23, 28.31], 10);
+
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom:21, maxNativeZoom:19, zIndex:1, attribution:'Imagery &copy; Esri, Maxar' }).addTo(map);
+const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { maxZoom:21, maxNativeZoom:19, zIndex:1, attribution:'&copy; OpenStreetMap' });
+const places = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom:21, maxNativeZoom:19, zIndex:5, attribution:'Esri Reference' }).addTo(map);
+
+const fields = L.featureGroup().addTo(map);
+const helpers = L.featureGroup().addTo(map);
+
+const BASES = { 'Satellite':sat, 'Streets':streets };
+L.control.layers(BASES, { 'Place labels':places }, { collapsed:true, position:'topright' }).addTo(map);
+L.control.scale({ imperial:false, position:'bottomleft' }).addTo(map);
+
+/* Place labels are always on when the site opens; the base map is remembered. */
+function saveLayers(){
+  const s = readJSON(K_SET, {});
+  s.base = Object.keys(BASES).find(k => map.hasLayer(BASES[k])) || 'Satellite';
+  writeJSON(K_SET, s);
+}
+function applyLayers(){
+  const base = BASES[readJSON(K_SET, {}).base] || sat;
+  Object.keys(BASES).forEach(k => { if(BASES[k] !== base && map.hasLayer(BASES[k])) map.removeLayer(BASES[k]); });
+  if(!map.hasLayer(base)) map.addLayer(base);
+  if(!map.hasLayer(places)) map.addLayer(places);
+  places.setZIndex(5);
+}
+map.on('baselayerchange overlayadd overlayremove', () => { places.setZIndex(5); saveLayers(); });
+
+const STYLE     = { color:'#0A63C9', weight:2.5, fillColor:'#3C8AE0', fillOpacity:0.16 };
+const STYLE_SEL = { color:'#0A63C9', weight:4,   fillColor:'#0A63C9', fillOpacity:0.3 };
+
+/* ---------- drawing ---------- */
+let drawer = null;
+function startDrawing(){
+  stopDrawing();
+  drawer = new L.Draw.Polygon(map, { allowIntersection:false, showArea:false,
+    shapeOptions:{ color:'#0A63C9', weight:3, dashArray:'6 5', fillOpacity:0.1 } });
+  drawer.enable();
+}
+function stopDrawing(){ if(drawer){ try { drawer.disable(); } catch(e){} drawer = null; } }
+
+function banner(on, title, text){
+  $('banner').classList.toggle('on', !!on);
+  if(on){ $('bannerTitle').textContent = title; $('bannerText').textContent = text; }
+}
+function setMode(m){
+  if(mode === 'edit' && m !== 'edit') commitEdit();
+  mode = m; stopDrawing();
+  $('btnDraw').classList.toggle('on', m === 'draw');
+  if(m === 'draw')      banner(true, 'Drawing a field', 'Tap each corner. Tap the first corner again to close the shape.');
+  else if(m === 'cut')  banner(true, 'Cutting a piece out', 'Draw over the part of the field you want removed.');
+  else if(m === 'edit') banner(true, 'Editing the shape', 'Drag the round handles. Press Done when the boundary is right.');
+  else banner(false);
+  $('bannerCancel').textContent = (m === 'edit') ? 'Done' : 'Cancel';
+  syncButtons();
+}
+$('bannerCancel').addEventListener('click', () => setMode('idle'));
+
+/* ---------- feature layers + labels ---------- */
+const layerOf = new Map();
+function addLayer(f){
+  let layer = null;
+  L.geoJSON(f, { style:STYLE }).eachLayer(l => { layer = l; });
+  if(!layer) return null;
+  layer._fid = f.properties.id;
+  fields.addLayer(layer);
+  layerOf.set(f.properties.id, layer);
+  nameLabel(layer, f.properties.name);
+  layer.on('click', e => { L.DomEvent.stop(e); pick(layer); });
+  layer.on('edit', () => { const g = feat(layer._fid); if(g) nameLabel(layer, g.properties.name); });
+  return layer;
+}
+function nameLabel(layer, name){
+  try { layer.unbindTooltip(); } catch(e){}
+  const ha = haOf(layer.toGeoJSON());
+  layer.bindTooltip(
+    '<span>' + String(name).replace(/[<>&]/g,'') + '</span><span class="sq">' + ha.toFixed(2) + ' ha</span>',
+    { permanent:true, direction:'center', className:'fname', opacity:1, interactive:false });
+  placeLabel(layer);
+}
+/* A permanent Leaflet tooltip sticks to the shape's centre, which scrolls off as
+   soon as you zoom into part of a big field. Keep every name inside the view. */
+function viewBox(){
+  const s = map.getSize(), top = 68, side = 12, bot = 40;
+  if(s.x < 120 || s.y < 160) return map.getBounds();
+  return L.latLngBounds(map.containerPointToLatLng([side, s.y - bot]),
+                        map.containerPointToLatLng([s.x - side, top]));
+}
+function placeLabel(layer, view){
+  const tip = layer.getTooltip && layer.getTooltip();
+  if(!tip) return;
+  view = view || viewBox();
+  let b; try { b = layer.getBounds(); } catch(e){ return; }
+  if(!b || !b.isValid()) return;
+  const gj = layer.toGeoJSON();
+  const on = ll => { try { return turf.booleanPointInPolygon([ll.lng, ll.lat], gj); } catch(e){ return true; } };
+  const mid = b.getCenter();
+  if(view.contains(mid) && on(mid)){ tip.setLatLng(mid); return; }
+  const s = Math.max(b.getSouth(), view.getSouth()), n = Math.min(b.getNorth(), view.getNorth());
+  const w = Math.max(b.getWest(),  view.getWest()),  e = Math.min(b.getEast(),  view.getEast());
+  if(s <= n && w <= e){
+    const c = L.latLng((s+n)/2, (w+e)/2);
+    if(on(c)){ tip.setLatLng(c); return; }
+    try {
+      const p = turf.pointOnFeature(gj);
+      const alt = L.latLng(p.geometry.coordinates[1], p.geometry.coordinates[0]);
+      tip.setLatLng(view.contains(alt) ? alt : c);
+    } catch(err){ tip.setLatLng(c); }
+    return;
+  }
+  tip.setLatLng(mid);
+}
+function placeLabels(){
+  const view = viewBox(), all = map.getBounds();
+  fields.eachLayer(l => { try { if(all.intersects(l.getBounds())) placeLabel(l, view); } catch(e){} });
+}
+map.on('moveend zoomend resize', placeLabels);
+
+function rebuild(){
+  fields.clearLayers(); layerOf.clear(); selected = null;
+  FC.features.filter(shown).forEach(addLayer);
+  placeLabels(); syncButtons();
+}
+const feat = id => FC.features.find(f => f.properties.id === id);
+function pick(layer){
+  if(selected && selected.setStyle) selected.setStyle(STYLE);
+  selected = layer;
+  if(layer && layer.setStyle) layer.setStyle(STYLE_SEL);
+  render(); syncButtons();
+}
+function unpick(){
+  if(mode === 'edit') return;
+  if(selected && selected.setStyle) selected.setStyle(STYLE);
+  selected = null; render(); syncButtons();
+}
+function zoomAll(){
+  if(!fields.getLayers().length) return toast('No fields to zoom to');
+  map.fitBounds(fields.getBounds(), { padding:[60,60] });
+}
+map.on('click', e => {
+  const t = e.originalEvent && e.originalEvent.target;
+  if(t && t.closest && t.closest('.leaflet-interactive')) return;
+  if(mode === 'idle') unpick();
+});
+</script>
+<script>
+/* ==========================================================
+   CLIENT MANAGER
+   ========================================================== */
+function ensureClient(){
+  if(!clients.length){
+    const c = { id:uid(), name:'My first client' };
+    clients = [c]; writeJSON(K_CLIENTS, clients);
+    writeJSON(keyFor(c.id), { type:'FeatureCollection', features:[] });
+  }
+}
+function fillClients(){
+  const sel = $('selClient'); sel.innerHTML = '';
+  clients.forEach(c => {
+    const n = (readJSON(keyFor(c.id), { features:[] }).features || []).length;
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = c.name + ' — ' + n + (n === 1 ? ' field' : ' fields');
+    sel.appendChild(o);
+  });
+  if(!activeId || !clients.some(c => c.id === activeId)) activeId = clients[0] ? clients[0].id : null;
+  sel.value = activeId || '';
+}
+function openClient(id){
+  activeId = id;
+  FC = readJSON(keyFor(id), { type:'FeatureCollection', features:[] });
+  FC.features = (FC.features || []).map(tidy);
+  undoStack = []; mergeArm = null;
+  writeJSON(keyFor(id), FC);
+  rebuild(); render();
+  if(fields.getLayers().length) zoomAll();
+}
+$('selClient').addEventListener('change', e => openClient(e.target.value));
+
+function addClient(){
+  const name = $('inpNewClient').value.trim();
+  if(!name){ $('inpNewClient').focus(); return toast('Type a client name first', 'bad'); }
+  const c = { id:uid(), name };
+  clients.push(c); writeJSON(K_CLIENTS, clients);
+  writeJSON(keyFor(c.id), { type:'FeatureCollection', features:[] });
+  $('inpNewClient').value = '';
+  fillClients(); openClient(c.id);
+  toast(name + ' added', 'ok');
+}
+$('btnAddClient').addEventListener('click', addClient);
+$('inpNewClient').addEventListener('keydown', e => { if(e.key === 'Enter') addClient(); });
+
+$('btnRename').addEventListener('click', async () => {
+  const c = clients.find(x => x.id === activeId); if(!c) return;
+  const v = await dialog({ title:'Rename client', input:c.name, ok:'Save' });
+  if(v === null || !v.trim()) return;
+  c.name = v.trim(); writeJSON(K_CLIENTS, clients); fillClients(); toast('Renamed', 'ok');
+});
+$('btnDeleteClient').addEventListener('click', async () => {
+  const c = clients.find(x => x.id === activeId); if(!c) return;
+  const n = (readJSON(keyFor(c.id), { features:[] }).features || []).length;
+  const go = await ask('Delete ' + c.name + '?',
+    'This removes the client and all ' + n + ' of their fields from this browser. It cannot be undone.', 'Delete');
+  if(!go) return;
+  localStorage.removeItem(keyFor(c.id));
+  clients = clients.filter(x => x.id !== c.id);
+  writeJSON(K_CLIENTS, clients);
+  ensureClient(); fillClients(); openClient(clients[0].id);
+  toast('Client deleted', 'ok');
+});
+
+/* ==========================================================
+   FIELD LIST
+   ========================================================== */
+function render(){
+  const box = $('rows'); box.innerHTML = '';
+  if(!FC.features.length){
+    box.innerHTML = '<div class="empty">No fields yet. Use <b>Tools &rarr; Draw Polygon</b>.</div>';
+    $('totalBar').style.display = 'none';
+    return;
+  }
+  FC.features.forEach(f => {
+    const p = f.properties, ha = haOf(f);
+    const row = document.createElement('div');
+    row.className = 'row' + (!shown(f) ? ' off' : '') + (selected && selected._fid === p.id ? ' sel' : '');
+
+    const tick = document.createElement('input');
+    tick.type = 'checkbox'; tick.checked = shown(f);
+    tick.title = 'Include this field in the job';
+
+    const mid = document.createElement('div'); mid.style.minWidth = '0';
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = p.name; nm.title = 'Zoom to ' + p.name;
+    const sub = document.createElement('div'); sub.className = 'ha'; sub.textContent = ha.toFixed(2) + ' ha';
+    mid.append(nm, sub);
+
+    const kit = document.createElement('div'); kit.className = 'kit';
+    const bM = document.createElement('button'); bM.innerHTML = '&#9096;'; bM.title = 'Merge with another field';
+    const bR = document.createElement('button'); bR.innerHTML = '&#9998;'; bR.title = 'Rename';
+    const bX = document.createElement('button'); bX.innerHTML = '&#10005;'; bX.title = 'Delete';
+    if(mergeArm === p.id) bM.classList.add('armed');
+    kit.append(bM, bR, bX);
+
+    row.append(tick, mid, kit); box.appendChild(row);
+
+    tick.addEventListener('change', () => { snapshot(); f.properties.visible = tick.checked; persist(); rebuild(); render(); });
+    nm.addEventListener('click', () => {
+      const l = layerOf.get(p.id);
+      if(!l) return toast('Tick this field to show it first');
+      map.fitBounds(l.getBounds(), { padding:[60,60] }); pick(l);
+    });
+    bM.addEventListener('click', () => {
+      if(mergeArm === null){ mergeArm = p.id; render(); toast('Now tap merge on the field to join it with'); }
+      else if(mergeArm === p.id){ mergeArm = null; render(); }
+      else merge(mergeArm, p.id);
+    });
+    bR.addEventListener('click', async () => {
+      const v = await dialog({ title:'Rename field', input:p.name, ok:'Save' });
+      if(v === null || !v.trim()) return;
+      snapshot(); f.properties.name = v.trim(); persist();
+      const l = layerOf.get(p.id); if(l) nameLabel(l, f.properties.name);
+      render();
+    });
+    bX.addEventListener('click', async () => {
+      const go = await ask('Delete ' + p.name + '?', 'You can put it back with Undo.', 'Delete');
+      if(go) removeField(p.id);
+    });
+  });
+
+  const on = FC.features.filter(shown);
+  const total = on.reduce((a,f) => a + haOf(f), 0);
+  $('totalBar').style.display = 'flex';
+  $('totalCount').textContent = on.length + (on.length === 1 ? ' field ticked' : ' fields ticked');
+  $('totalHa').textContent = total.toFixed(2) + ' ha';
+}
+function syncButtons(){
+  const live = !!selected && !!selected._fid;
+  $('btnEdit').disabled = !live;
+  $('btnCut').disabled  = !live;
+  $('btnUndo').disabled = !undoStack.length;
+  $('btnEdit').classList.toggle('on', mode === 'edit');
+  $('btnCut').classList.toggle('on', mode === 'cut');
+  const f = live ? feat(selected._fid) : null;
+  $('toolNote').textContent = f
+    ? f.properties.name + ' is selected — Edit or Cut will work on it.'
+    : 'Tap a field on the map or in the list to unlock Edit and Cut.';
+}
+function removeField(id){
+  snapshot();
+  FC.features = FC.features.filter(f => f.properties.id !== id);
+  const l = layerOf.get(id);
+  if(l){ if(selected === l) selected = null; fields.removeLayer(l); layerOf.delete(id); }
+  if(mergeArm === id) mergeArm = null;
+  persist(); render(); syncButtons(); toast('Field deleted', 'ok');
+}
+function merge(a, b){
+  const f1 = feat(a), f2 = feat(b); mergeArm = null;
+  if(!f1 || !f2){ render(); return toast('Could not find both fields', 'bad'); }
+  let u = null;
+  try { u = turf.union(turf.feature(f1.geometry), turf.feature(f2.geometry)); } catch(e){}
+  if(!u){ render(); return toast('Those two shapes need to touch or overlap to merge', 'bad'); }
+  snapshot();
+  const m = tidy({ type:'Feature', geometry:u.geometry, properties:{
+    id:uid(), name:f1.properties.name + ' + ' + f2.properties.name, visible:true, savedAt:new Date().toISOString() } });
+  FC.features = FC.features.filter(f => f.properties.id !== a && f.properties.id !== b);
+  FC.features.push(m);
+  persist(); rebuild(); render();
+  const l = layerOf.get(m.properties.id); if(l) pick(l);
+  toast('Merged into one field', 'ok');
+}
+
+/* ==========================================================
+   TOOLS — draw, edit, cut
+   ========================================================== */
+$('btnDraw').addEventListener('click', () => {
+  if(mode === 'draw') return setMode('idle');
+  setMode('draw'); startDrawing();
+});
+$('btnCut').addEventListener('click', () => {
+  if(!selected) return toast('Select a field first', 'bad');
+  if(mode === 'cut') return setMode('idle');
+  setMode('cut'); startDrawing();
+});
+$('btnEdit').addEventListener('click', () => {
+  if(!selected) return toast('Select a field first', 'bad');
+  if(mode === 'edit') return setMode('idle');
+  setMode('edit');
+  try { selected.editing.enable(); } catch(e){ toast('This shape cannot be edited', 'bad'); setMode('idle'); }
+});
+function commitEdit(){
+  if(!selected || !selected.editing) return;
+  if(!selected.editing.enabled()) return;
+  try { selected.editing.disable(); } catch(e){}
+  const f = feat(selected._fid); if(!f) return;
+  snapshot();
+  f.geometry = selected.toGeoJSON().geometry;
+  persist(); nameLabel(selected, f.properties.name); render();
+  toast('Boundary saved — ' + haOf(f).toFixed(2) + ' ha', 'ok');
+}
+
+map.on(L.Draw.Event.CREATED, e => {
+  const gj = e.layer.toGeoJSON();
+  try { e.layer.remove(); } catch(err){}
+  if(mode === 'cut'){ cut(gj); setMode('idle'); return; }
+  snapshot();
+  const f = tidy({ type:'Feature', geometry:gj.geometry, properties:{
+    id:uid(), name:'Field ' + (FC.features.length + 1), visible:true, savedAt:new Date().toISOString() } });
+  FC.features.push(f);
+  persist();
+  const l = addLayer(f); if(l) pick(l);
+  render();
+  toast(f.properties.name + ' saved — ' + haOf(f).toFixed(2) + ' ha', 'ok');
+  setMode('idle');
+});
+function cut(cutter){
+  if(!selected) return;
+  const id = selected._fid, target = feat(id);
+  if(!target) return;
+  let diff = null;
+  try { diff = turf.difference(turf.feature(target.geometry), turf.feature(cutter.geometry)); }
+  catch(err){ return toast('Cut failed — the shapes have to overlap', 'bad'); }
+  snapshot();
+  const name = target.properties.name;
+  FC.features = FC.features.filter(f => f.properties.id !== id);
+  fields.removeLayer(selected); layerOf.delete(id); selected = null;
+  if(!diff){
+    persist(); render(); syncButtons();
+    return toast('That cut removed the whole field', 'ok');
+  }
+  const parts = diff.geometry.type === 'MultiPolygon'
+    ? diff.geometry.coordinates.map(c => ({ type:'Polygon', coordinates:c }))
+    : [diff.geometry];
+  parts.forEach((g,i) => {
+    const f = tidy({ type:'Feature', geometry:g, properties:{
+      id:uid(), name: parts.length > 1 ? name + ' pt' + (i+1) : name, visible:true, savedAt:new Date().toISOString() } });
+    FC.features.push(f);
+    const l = addLayer(f); if(i === 0 && l) pick(l);
+  });
+  persist(); render();
+  toast('Cut done — ' + parts.length + ' piece' + (parts.length > 1 ? 's' : '') + ' left', 'ok');
+}
+$('btnUndo').addEventListener('click', undo);
+$('btnZoomAll').addEventListener('click', zoomAll);
+$('btnZoomAll2').addEventListener('click', zoomAll);
+</script>
+<script>
+/* ==========================================================
+   MAKE JOB  ·  IMPORT KML  ·  BACKUP
+   ========================================================== */
+const clientName = () => { const c = clients.find(x => x.id === activeId); return c ? c.name : 'Client'; };
+const fileSafe = s => String(s || 'client').replace(/[^\w\-]+/g, '_');
+
+function jobText(jobId, name){
+  let out = '.JOB ' + jobId + ' ' + name + '\n.VERSION 1\n';
+  let n = 1;
+  FC.features.filter(shown).forEach(f => {
+    const polys = f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [f.geometry.coordinates];
+    polys.forEach(rings => {
+      rings.forEach(ring => {
+        out += '.POL ' + n + ' #' + n + '\n\tINC\n';
+        ring.forEach(c => { out += '\t' + f6(c[1]) + ' ' + f6(c[0]) + '\n'; });
+        n++;
+      });
+    });
+  });
+  return out;
+}
+function kmlText(){
+  return tokml({ type:'FeatureCollection', features: FC.features.filter(shown).map(f => ({
+    type:'Feature', geometry:f.geometry,
+    properties:{ name:f.properties.name, ha:haOf(f).toFixed(2) } })) }, { name:'name' });
+}
+
+$('btnJob').addEventListener('click', async () => {
+  const on = FC.features.filter(shown);
+  if(!on.length) return toast('Tick at least one field first', 'bad');
+  const total = on.reduce((a,f) => a + haOf(f), 0);
+  const v = await dialog({
+    title:'Make JOB',
+    text: on.length + (on.length === 1 ? ' field' : ' fields') + ', ' + total.toFixed(2)
+        + ' ha for ' + clientName() + '. Give it a job number.',
+    input: String(Date.now()).slice(-5), placeholder:'Job number', ok:'Make JOB' });
+  if(v === null) return;
+  const jobId = String(v).trim();
+  if(!/^[0-9]+$/.test(jobId)) return toast('Job number must be digits only', 'bad');
+  download(jobId + '.job', jobText(jobId, clientName()), 'application/octet-stream');
+  setTimeout(() => download(jobId + '_' + fileSafe(clientName()) + '.kml', kmlText(),
+    'application/vnd.google-earth.kml+xml'), 350);
+  toast('Job ' + jobId + ' ready — ' + total.toFixed(2) + ' ha', 'ok');
+});
+
+$('btnImport').addEventListener('click', () => $('fileIn').click());
+$('fileIn').addEventListener('change', e => { importFiles(e.target.files); e.target.value = ''; });
+
+const readText = file => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(String(r.result));
+  r.onerror = () => rej(new Error('read'));
+  r.readAsText(file);
+});
+
+/* JSZip is only pulled in the first time someone actually opens a KMZ,
+   so the page still loads fast for everyone else. */
+let zipLoad = null;
+function loadZip(){
+  if(window.JSZip) return Promise.resolve(window.JSZip);
+  if(zipLoad) return zipLoad;
+  zipLoad = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js';
+    s.onload = () => res(window.JSZip);
+    s.onerror = () => rej(new Error('JSZip failed to load'));
+    document.head.appendChild(s);
+  });
+  return zipLoad;
+}
+async function fromKMZ(file, base){
+  const JSZip = await loadZip();
+  const zip = await JSZip.loadAsync(file);
+  const inner = Object.keys(zip.files).filter(n => /\.kml$/i.test(n) && !zip.files[n].dir);
+  const out = [];
+  for(const n of inner){
+    const txt = await zip.files[n].async('string');
+    const b = inner.length > 1 ? n.replace(/^.*\//, '').replace(/\.kml$/i, '') : base;
+    out.push(...fromKML(txt, b));
+  }
+  return out;
+}
+
+/* Reads any number of files in one go and adds everything in a single step,
+   so one Undo puts the whole import back. */
+async function importFiles(fileList){
+  const files = [...(fileList || [])].filter(Boolean);
+  if(!files.length || !activeId) return;
+  if(files.length > 1) toast('Reading ' + files.length + ' files…');
+
+  const all = [], bad = [];
+  for(const file of files){
+    const ext = file.name.toLowerCase().split('.').pop();
+    const base = file.name.replace(/\.[^.]+$/, '');
+    try {
+      let got = [];
+      if(ext === 'kmz'){ got = await fromKMZ(file, base); }
+      else {
+        const txt = await readText(file);
+        if(ext === 'job' || /^\.JOB\b/m.test(txt))      got = fromJob(txt, base);
+        else if(ext === 'kml' || /<kml/i.test(txt))      got = fromKML(txt, base);
+        else                                             got = fromGeoJSON(txt, base);
+      }
+      if(got.length) all.push(...got); else bad.push(file.name);
+    } catch(err){ console.error(file.name, err); bad.push(file.name); }
+  }
+  bringIn(all, files.length, bad);
+}
+
+function bringIn(list, fileCount, bad){
+  bad = bad || [];
+  if(!list.length){
+    return toast(bad.length
+      ? (bad.length === 1 ? 'No fields found in ' + bad[0] : 'No fields found in any of those ' + bad.length + ' files')
+      : 'No fields found in that file', 'bad');
+  }
+  // skip anything already saved under this client — same name, same area
+  const sig = f => f.properties.name.toLowerCase() + '|' + haOf(f).toFixed(3);
+  const have = new Set(FC.features.map(sig));
+  const fresh = []; let dup = 0;
+  list.forEach(f => { const k = sig(f); if(have.has(k)){ dup++; return; } have.add(k); fresh.push(f); });
+  if(!fresh.length) return toast('Those ' + list.length + ' fields are already in ' + clientName(), 'bad');
+
+  // two fields must never end up with the same name
+  const used = {};
+  FC.features.forEach(f => used[f.properties.name] = 1);
+  fresh.forEach(f => {
+    const n = f.properties.name;
+    if(!used[n]) used[n] = 1;
+    else { used[n]++; f.properties.name = n + ' ' + used[n]; }
+  });
+
+  snapshot();
+  fresh.forEach(f => FC.features.push(tidy(f)));
+  persist(); rebuild(); render(); zoomAll();
+
+  let msg = 'Imported ' + fresh.length + ' field' + (fresh.length > 1 ? 's' : '');
+  if(fileCount > 1) msg += ' from ' + fileCount + ' files';
+  if(dup) msg += ' · ' + dup + ' already there, skipped';
+  toast(msg, 'ok');
+  if(bad.length) setTimeout(() => toast('Could not read ' + bad.slice(0,3).join(', ')
+    + (bad.length > 3 ? ' and ' + (bad.length - 3) + ' more' : ''), 'bad'), 500);
+}
+
+function ringFrom(txt){
+  const r = txt.trim().split(/\s+/).map(s => { const p = s.split(','); return [parseFloat(p[0]), parseFloat(p[1])]; })
+    .filter(c => isFinite(c[0]) && isFinite(c[1]));
+  if(r.length && (r[0][0] !== r[r.length-1][0] || r[0][1] !== r[r.length-1][1])) r.push(r[0].slice());
+  return r;
+}
+/* Each parser just returns fields now — the caller decides when to save them. */
+function fromKML(txt, base){
+  const xml = new DOMParser().parseFromString(txt, 'text/xml');
+  const marks = [...xml.getElementsByTagName('Placemark')];
+  const out = [];
+  (marks.length ? marks : [xml]).forEach(node => {
+    const ne = node.getElementsByTagName('name')[0];
+    const nm = ne ? ne.textContent.trim() : '';
+    [...node.getElementsByTagName('Polygon')].forEach((pg, i) => {
+      const outer = pg.getElementsByTagName('outerBoundaryIs')[0];
+      const oc = (outer || pg).getElementsByTagName('coordinates')[0];
+      if(!oc) return;
+      const rings = [ringFrom(oc.textContent)];
+      [...pg.getElementsByTagName('innerBoundaryIs')].forEach(ib => {
+        const ic = ib.getElementsByTagName('coordinates')[0];
+        if(ic){ const r = ringFrom(ic.textContent); if(r.length >= 4) rings.push(r); }
+      });
+      if(rings[0].length < 4) return;
+      out.push({ type:'Feature', geometry:{ type:'Polygon', coordinates:rings },
+        properties:{ id:uid(), visible:true, savedAt:new Date().toISOString(),
+          name:(nm || base || 'Imported field') + (i ? ' ' + (i + 1) : '') } });
+    });
+  });
+  return out;
+}
+function fromGeoJSON(txt, base){
+  const gj = JSON.parse(txt);
+  const list = gj.type === 'FeatureCollection' ? gj.features : [gj];
+  const out = [];
+  list.forEach((f, i) => {
+    if(!f.geometry || !/Polygon/.test(f.geometry.type)) return;
+    const p = f.properties || {};
+    out.push({ type:'Feature', geometry:f.geometry, properties:{
+      id:uid(), name:p.name || p.Name || base || ('Imported ' + (i + 1)),
+      visible:true, savedAt:new Date().toISOString() } });
+  });
+  return out;
+}
+function fromJob(txt, base){
+  const polys = []; let cur = null;
+  txt.split(/\r?\n/).forEach(raw => {
+    const t = raw.trim(); if(!t) return;
+    if(t.startsWith('.POL')){ cur = []; polys.push(cur); return; }
+    if(t.startsWith('.')){ cur = null; return; }
+    if(!cur) return;
+    if(/^(INC|EXC)$/i.test(t)) return;
+    const m = t.match(/^(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/);
+    if(m) cur.push([parseFloat(m[2]), parseFloat(m[1])]);
+  });
+  const out = [];
+  polys.forEach((ring, i) => {
+    if(ring.length < 4) return;
+    const r = ring.slice();
+    if(r[0][0] !== r[r.length-1][0] || r[0][1] !== r[r.length-1][1]) r.push(r[0].slice());
+    out.push({ type:'Feature', geometry:{ type:'Polygon', coordinates:[r] },
+      properties:{ id:uid(), name:(base || 'Field') + ' ' + (i + 1),
+        visible:true, savedAt:new Date().toISOString() } });
+  });
+  return out;
+}
+
+/* drag files straight onto the map */
+(function dropFiles(){
+  const zone = document.querySelector('main'), overlay = $('dropzone');
+  let depth = 0;
+  const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].indexOf('Files') >= 0;
+  window.addEventListener('dragover', e => { if(hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', e => { if(hasFiles(e)) e.preventDefault(); });
+  zone.addEventListener('dragenter', e => { if(!hasFiles(e)) return; e.preventDefault(); depth++; overlay.classList.add('on'); });
+  zone.addEventListener('dragover',  e => { if(hasFiles(e)) e.preventDefault(); });
+  zone.addEventListener('dragleave', e => { if(!hasFiles(e)) return; depth = Math.max(0, depth - 1); if(!depth) overlay.classList.remove('on'); });
+  zone.addEventListener('drop', e => {
+    if(!hasFiles(e)) return;
+    e.preventDefault(); depth = 0; overlay.classList.remove('on');
+    importFiles(e.dataTransfer.files);
+  });
+})();
+
+$('btnBackup').addEventListener('click', () => {
+  const data = {};
+  clients.forEach(c => data[c.id] = readJSON(keyFor(c.id), { type:'FeatureCollection', features:[] }));
+  download('agrimap_backup_' + new Date().toISOString().slice(0,10) + '.json',
+    JSON.stringify({ app:'agrimappro', version:3, exportedAt:new Date().toISOString(), clients, data }),
+    'application/json');
+  toast('Backup saved', 'ok');
+});
+$('btnRestore').addEventListener('click', () => $('fileRestore').click());
+$('fileRestore').addEventListener('change', e => {
+  const file = e.target.files[0]; if(!file) return;
+  const rd = new FileReader();
+  rd.onload = async () => {
+    let pack = null;
+    try { pack = JSON.parse(rd.result); } catch(err){}
+    if(!pack || pack.app !== 'agrimappro' || !pack.clients) return toast('That is not an Agri Map backup', 'bad');
+    const go = await ask('Restore this backup?',
+      pack.clients.length + ' client(s) from ' + String(pack.exportedAt || '').slice(0,10)
+      + '. Everything in this browser is replaced.', 'Restore');
+    if(!go) return;
+    Object.keys(localStorage).filter(k => k.startsWith('agrimappro')).forEach(k => localStorage.removeItem(k));
+    clients = pack.clients; writeJSON(K_CLIENTS, clients);
+    Object.keys(pack.data || {}).forEach(id => writeJSON(keyFor(id), pack.data[id]));
+    fillClients(); openClient(clients[0].id);
+    toast('Backup restored', 'ok');
+  };
+  rd.readAsText(file); e.target.value = '';
+});
+
+/* ==========================================================
+   SEARCH  ·  MY POSITION  ·  PANEL
+   ========================================================== */
+function parseLatLng(s){
+  s = s.trim();
+  let m = s.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if(m) return [+m[1], +m[2]];
+  m = s.match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);
+  if(m) return [+m[1], +m[2]];
+  const dms = [...s.matchAll(/(\d+(?:\.\d+)?)\s*[°d:\s]\s*(\d+(?:\.\d+)?)\s*['\u2032m:\s]\s*(\d+(?:\.\d+)?)?\s*["\u2033s]?\s*([NSEW])/gi)];
+  if(dms.length >= 2){
+    const v = dms.slice(0,2).map(d => {
+      const dec = (+d[1]) + (+d[2])/60 + (+(d[3] || 0))/3600;
+      return /[SW]/i.test(d[4]) ? -dec : dec;
+    });
+    return /[NS]/i.test(dms[0][4]) ? v : [v[1], v[0]];
+  }
+  return null;
+}
+async function search(){
+  const q = $('inpSearch').value.trim(); if(!q) return;
+  const ll = parseLatLng(q);
+  if(ll){ map.setView(ll, 16); return; }
+  toast('Searching…');
+  try {
+    const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q));
+    const j = await r.json();
+    if(!j.length) return toast('Nothing found by that name', 'bad');
+    map.setView([+j[0].lat, +j[0].lon], 14);
+    toast(j[0].display_name.split(',').slice(0,2).join(','), 'ok');
+  } catch(err){ toast('Search needs a connection — paste coordinates instead', 'bad'); }
+}
+$('btnSearch').addEventListener('click', search);
+$('inpSearch').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.target.blur(); search(); } });
+
+let meDot = null, meRing = null;
+$('btnLocate').addEventListener('click', () => {
+  toast('Finding your position…');
+  map.locate({ setView:true, maxZoom:16, enableHighAccuracy:true, timeout:12000 });
+});
+map.on('locationfound', e => {
+  if(meDot) helpers.removeLayer(meDot);
+  if(meRing) helpers.removeLayer(meRing);
+  meRing = L.circle(e.latlng, { radius:e.accuracy, color:'#0A63C9', weight:1, fillOpacity:0.1 }).addTo(helpers);
+  meDot = L.circleMarker(e.latlng, { radius:6, color:'#fff', weight:3, fillColor:'#0A63C9', fillOpacity:1 }).addTo(helpers);
+  toast('You are within ' + Math.round(e.accuracy) + ' m of here', 'ok');
+});
+map.on('locationerror', () => toast('No position — allow location access (needs https)', 'bad'));
+
+function togglePanel(){
+  $('app').classList.toggle('hide-panel');
+  setTimeout(() => { map.invalidateSize(); placeLabels(); }, 280);
+}
+$('btnPanel').addEventListener('click', togglePanel);
+$('btnSheet').addEventListener('click', togglePanel);
+window.addEventListener('resize', () => setTimeout(() => { map.invalidateSize(); placeLabels(); }, 140));
+
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if(tag === 'input' || tag === 'select' || tag === 'textarea'){ if(e.key === 'Escape') e.target.blur(); return; }
+  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); return undo(); }
+  if(e.ctrlKey || e.metaKey || e.altKey) return;
+  if(e.key === 'Escape'){
+    if($('scrim').classList.contains('on')) closeDlg(null);
+    else if(mode !== 'idle') setMode('idle');
+    else unpick();
+  }
+});
+
+(function start(){
+  applyLayers();
+  ensureClient();
+  fillClients();
+  openClient(activeId);
+  if(window.innerWidth <= 880) $('app').classList.add('hide-panel');
+  setTimeout(() => map.invalidateSize(), 200);
+  if(!FC.features.length) setTimeout(() => toast('Tap Draw Polygon to mark your first field'), 800);
+})();
+</script>
+</body>
+</html>
